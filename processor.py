@@ -42,10 +42,32 @@ def main():
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(args.url, download=True)
     except DownloadError as exc:
-        if diag.blocked or diag.rate_limited or "Sign in to confirm" in str(exc) or "not a bot" in str(exc) or "429" in str(exc):
-            print("::error title=YouTube blocked anonymous download::YouTube rejected yt-dlp on this GitHub-hosted runner. No source video was downloaded; local AI and Shorts rendering were not executed.", flush=True)
-            raise SystemExit("YOUTUBE_ACCESS_BLOCKED: Anonymous YouTube access denied from this runner. No guaranteed cookie-free, login-free fix exists for the runner's IP. Stop here; retrying the same source on the same service may keep failing.") from None
-        raise
+        endpoint = os.getenv("VD6S_API_URL", "").strip()
+        if endpoint:
+            # Generic adapter, not a verified VD6S API. Configure only an authorized endpoint.
+            import urllib.request
+            if urlparse(endpoint).scheme != "https":
+                raise ValueError("Fallback endpoint must use HTTPS")
+            req = urllib.request.Request(endpoint, data=json.dumps({"url": args.url, "quality": "720p"}).encode(), headers={"Content-Type":"application/json","Accept":"video/mp4"}, method="POST")
+            target = out / "source.mp4"
+            with urllib.request.urlopen(req, timeout=180) as response, target.open("wb") as f:
+                if response.headers.get_content_type() not in ("video/mp4","application/octet-stream"):
+                    raise RuntimeError("Fallback did not return video bytes")
+                total = 0
+                while chunk := response.read(1048576):
+                    total += len(chunk)
+                    if total > 1073741824:
+                        raise RuntimeError("Fallback exceeds 1 GB")
+                    f.write(chunk)
+            probe = json.loads(subprocess.check_output(["ffprobe","-v","error","-show_streams","-show_format","-of","json",str(target)]))
+            if not any(x.get("codec_type") == "video" for x in probe["streams"]):
+                raise RuntimeError("Fallback returned invalid video")
+            info = {"duration":float(probe["format"]["duration"]),"title":"Video highlight"}
+        else:
+            if diag.blocked or diag.rate_limited or "Sign in to confirm" in str(exc) or "not a bot" in str(exc) or "429" in str(exc):
+                print("::error title=YouTube blocked anonymous download::YouTube rejected yt-dlp on this GitHub-hosted runner. No source video was downloaded; local AI and Shorts rendering were not executed.", flush=True)
+                raise SystemExit("YOUTUBE_ACCESS_BLOCKED: Anonymous YouTube access denied from this runner. No guaranteed cookie-free, login-free fix exists for the runner's IP. Stop here; retrying the same source on the same service may keep failing.") from None
+            raise
     source = next(f for f in out.glob("source.*") if f.suffix in (".mp4", ".webm", ".mkv"))
     duration = float(info["duration"])
     if duration < 300:
