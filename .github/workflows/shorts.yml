@@ -3,8 +3,12 @@ on:
   workflow_dispatch:
     inputs:
       youtube_url:
-        description: Authorized YouTube long video URL
-        required: true
+        description: Authorized YouTube long video URL (or use video_file_url)
+        required: false
+        type: string
+      video_file_url:
+        description: HTTPS direct link to your own MP4 file (optional; avoid shared-drive page links)
+        required: false
         type: string
       upload:
         description: Automatically upload ten Shorts
@@ -35,6 +39,7 @@ jobs:
       - name: Generate ten Shorts
         env:
           VIDEO_URL: ${{ inputs.youtube_url }}
+          FILE_URL: ${{ inputs.video_file_url }}
           UPLOAD: ${{ inputs.upload }}
           PRIVACY: ${{ inputs.privacy }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -44,8 +49,16 @@ jobs:
         run: |
           args=()
           if [ "$UPLOAD" = "true" ]; then args+=(--upload); fi
-          if [ -z "$VIDEO_URL" ]; then echo "Missing YouTube URL"; exit 1; fi
-          python processor.py "$VIDEO_URL" --privacy "$PRIVACY" "${args[@]}"
+          if [ -n "$FILE_URL" ]; then
+            python -c 'import os,urllib.parse; u=urllib.parse.urlparse(os.environ["FILE_URL"]); assert u.scheme=="https" and u.hostname, "video_file_url must be HTTPS"'
+            curl --fail --location --retry 2 --max-time 1800 --output source_input.mp4 "$FILE_URL"
+            ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 source_input.mp4
+            python processor.py --video-file source_input.mp4 --privacy "$PRIVACY" "${args[@]}"
+          elif [ -n "$VIDEO_URL" ]; then
+            python processor.py "$VIDEO_URL" --privacy "$PRIVACY" "${args[@]}"
+          else
+            echo "Provide youtube_url or video_file_url"; exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
