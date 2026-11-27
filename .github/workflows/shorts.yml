@@ -1,0 +1,44 @@
+name: YouTube Shorts Factory
+on:
+  workflow_dispatch:
+    inputs:
+      instagram_url:
+        description: Authorized Instagram Reel URL
+        required: true
+        type: string
+      upload:
+        description: Upload privately to YouTube
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install -r requirements.txt
+      - name: Process reel
+        env:
+          REEL_URL: ${{ inputs.instagram_url }}
+          UPLOAD: ${{ inputs.upload }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          args=()
+          if [ "$UPLOAD" = "true" ]; then args+=(--upload); fi
+          python processor.py "$REEL_URL" "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shorts-output
+          path: |
+            output/short.mp4
+            output/metadata.json
+          retention-days: 3
