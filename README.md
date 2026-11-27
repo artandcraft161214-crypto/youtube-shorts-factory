@@ -8,3 +8,6 @@ Minimum source duration: 5 minutes. Gemini timestamp validation rejects invalid 
 
 ## YouTube download failures
 The hosted GitHub runner installs Deno and yt-dlp EJS support to handle YouTube's JavaScript extraction requirements. This cannot guarantee downloads: YouTube may still require bot verification or block GitHub's cloud IP. If so, consider a self-hosted runner on an authorized machine or process a video file you own locally. Do not publish or share YouTube account cookies in repository secrets/logs.
+
+## Alternative when GitHub-hosted IPs are blocked
+In the Actions form, leave `youtube_url` blank and provide `video_file_url`: a direct HTTPS download URL for an MP4 you own or are authorized to republish. This must return actual video bytes, not a Drive/Dropbox preview page. The workflow downloads it and runs the same Gemini/FFmpeg clipping pipeline. Avoid URLs containing long-lived access tokens; workflow inputs can be visible to people with Actions access. For private/sensitive footage use a self-hosted runner and `python processor.py --video-file /path/to/video.mp4` rather than a public URL. Leave `upload` disabled for initial test.
