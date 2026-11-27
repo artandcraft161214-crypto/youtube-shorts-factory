@@ -11,6 +11,30 @@ from yt_dlp.utils import DownloadError
 def run(*args):
     subprocess.run(args, check=True)
 
+def browser_download(url, out):
+    # Only use with permission from the site and rights to the source video.
+    from playwright.sync_api import sync_playwright
+    target = out / "source.mp4"
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(accept_downloads=True)
+            page.goto("https://vd6s.net/en5/", wait_until="domcontentloaded", timeout=60000)
+            field = page.locator('input[type="url"], input[name="url"], input[placeholder*="link" i]').first
+            field.fill(url, timeout=20000)
+            page.get_by_role("button", name=re.compile("convert|start|download", re.I)).first.click(timeout=20000)
+            row = page.locator("tr").filter(has_text=re.compile(r"720p", re.I)).filter(has_text=re.compile("mp4", re.I)).first
+            button = row.get_by_role("link", name=re.compile("download", re.I)).or_(row.get_by_role("button", name=re.compile("download", re.I))).first
+            with page.expect_download(timeout=120000) as event:
+                button.click(timeout=60000)
+            event.value.save_as(str(target))
+        finally:
+            browser.close()
+    probe = json.loads(subprocess.check_output(["ffprobe","-v","error","-show_streams","-show_format","-of","json",str(target)]))
+    if not any(x.get("codec_type") == "video" for x in probe["streams"]):
+        raise RuntimeError("Browser download is not a valid video")
+    return {"duration":float(probe["format"]["duration"]),"title":"Video highlight"}
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("url")
@@ -43,7 +67,9 @@ def main():
             info = ydl.extract_info(args.url, download=True)
     except DownloadError as exc:
         endpoint = os.getenv("VD6S_API_URL", "").strip()
-        if endpoint:
+        if os.getenv("VD6S_BROWSER_ALLOWED", "").lower() == "true":
+            info = browser_download(args.url, out)
+        elif endpoint:
             # Generic adapter, not a verified VD6S API. Configure only an authorized endpoint.
             import urllib.request
             if urlparse(endpoint).scheme != "https":
