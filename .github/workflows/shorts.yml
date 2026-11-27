@@ -34,6 +34,7 @@ jobs:
       - run: python -m py_compile processor.py
       - name: Generate ten Shorts locally
         env:
+          VD6S_API_URL: ${{ vars.VD6S_API_URL }}
           VIDEO_URL: ${{ inputs.youtube_url }}
           UPLOAD: ${{ inputs.upload }}
           PRIVACY: ${{ inputs.privacy }}
