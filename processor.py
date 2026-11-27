@@ -30,7 +30,7 @@ def main():
         client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
         prompt = """Analyze the actual public YouTube video. Return JSON with duration_seconds and clips: exactly ten distinct non-overlapping 30–60 second excerpts, ranked by engagement. Each clip must contain start and end in absolute seconds, title ending in #Shorts, description, hashtags array, tags array, hook and reason. Do not invent content or timestamps. If video is unavailable or shorter than 300 seconds, return an error field instead."""
         response = client.models.generate_content(
-            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             contents=types.Content(parts=[
                 types.Part(file_data=types.FileData(file_uri=args.url)),
                 types.Part(text=prompt)
@@ -94,7 +94,7 @@ def main():
         if remote.state.name != "ACTIVE":
             raise RuntimeError("Gemini video processing failed or timed out")
         prompt = f"""Analyze the entire video (duration {duration} seconds). Select exactly 10 distinct non-overlapping engaging excerpts, each 30 to 60 seconds, with complete thoughts and strong opening hooks. Use absolute timestamps in seconds. Rank by predicted engagement, not chronological order. Return a JSON object with clips array; each clip has start, end, title, description, hashtags (array), tags (array), hook, reason. Metadata must match actual excerpt and language; avoid invented claims. Titles end in #Shorts. Choose natural boundaries."""
-        response = client.models.generate_content(model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), contents=[remote, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
+        response = client.models.generate_content(model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), contents=[remote, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
         clips = json.loads(response.text)["clips"]
     finally:
         client.files.delete(name=remote.name)
