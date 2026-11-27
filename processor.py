@@ -1,8 +1,7 @@
-import argparse, json, os, subprocess, time
+import argparse, json, os, subprocess, time, re
+from collections import Counter
 from pathlib import Path
 from urllib.parse import urlparse
-from google import genai
-from google.genai import types, errors
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -12,22 +11,9 @@ from yt_dlp.utils import DownloadError
 def run(*args):
     subprocess.run(args, check=True)
 
-def generate_with_retry(client, **kwargs):
-    delays = (20, 40, 80, 120)
-    for attempt in range(len(delays) + 1):
-        try:
-            return client.models.generate_content(**kwargs)
-        except errors.APIError as exc:
-            if getattr(exc, "code", None) not in (500, 502, 503, 504) or attempt == len(delays):
-                raise
-            delay = delays[attempt]
-            print(f"Gemini temporarily unavailable; retry {attempt + 1}/{len(delays)} in {delay}s", flush=True)
-            time.sleep(delay)
-
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("url")
-    p.add_argument("--analysis-only", action="store_true")
     p.add_argument("--upload", action="store_true")
     p.add_argument("--privacy", choices=["private", "unlisted", "public"], default="private")
     args = p.parse_args()
@@ -36,36 +22,6 @@ def main():
     u = urlparse(args.url)
     if u.scheme != "https" or u.hostname not in ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"):
         raise ValueError("Use an HTTPS YouTube video URL")
-    if args.analysis_only:
-        if args.upload:
-            p.error("--analysis-only cannot upload video files")
-        client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-        prompt = """Analyze the actual public YouTube video. Return JSON with duration_seconds and clips: exactly ten distinct non-overlapping 30–60 second excerpts, ranked by engagement. Each clip must contain start and end in absolute seconds, title ending in #Shorts, description, hashtags array, tags array, hook and reason. Do not invent content or timestamps. If video is unavailable or shorter than 300 seconds, return an error field instead."""
-        response = generate_with_retry(client, 
-            model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
-            contents=types.Content(parts=[
-                types.Part(file_data=types.FileData(file_uri=args.url)),
-                types.Part(text=prompt)
-            ]),
-            config=types.GenerateContentConfig(response_mime_type="application/json"))
-        data = json.loads(response.text)
-        if data.get("error"):
-            raise ValueError(str(data["error"]))
-        duration = float(data["duration_seconds"])
-        clips = data["clips"]
-        if len(clips) != 10 or duration < 300:
-            raise ValueError("Expected ten clips from a video of at least five minutes")
-        intervals = []
-        for c in clips:
-            start, end = float(c["start"]), float(c["end"])
-            if not (0 <= start < end <= duration and 30 <= end-start <= 60) or any(start < b and end > a for a,b in intervals):
-                raise ValueError("Invalid or overlapping AI timestamps")
-            intervals.append((start,end))
-        data["status"] = "analysis_only_no_video_rendered"
-        data["source_url"] = args.url
-        (out / "manifest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        print("Analysis complete: ten proposed clips. No MP4 files generated or uploaded.")
-        return
     class DownloadDiagnostics:
         blocked = False
         rate_limited = False
@@ -87,36 +43,46 @@ def main():
             info = ydl.extract_info(args.url, download=True)
     except DownloadError as exc:
         if diag.blocked or diag.rate_limited or "Sign in to confirm" in str(exc) or "not a bot" in str(exc) or "429" in str(exc):
-            raise RuntimeError("YOUTUBE_ACCESS_BLOCKED: GitHub-hosted runner received YouTube rate-limiting (HTTP 429) and/or bot verification. Stopping without retries; Gemini and Shorts generation were not reached. This is a YouTube access restriction, not a code or Gemini-key failure.") from exc
+            raise RuntimeError("YOUTUBE_ACCESS_BLOCKED: GitHub-hosted runner received YouTube rate-limiting (HTTP 429) and/or bot verification. Stopping without retries; Local analysis and Shorts generation were not reached. This is a YouTube access restriction, not a code or Gemini-key failure.") from exc
         raise
     source = next(f for f in out.glob("source.*") if f.suffix in (".mp4", ".webm", ".mkv"))
     duration = float(info["duration"])
     if duration < 300:
         raise ValueError("At least 5 minutes needed for ten non-overlapping 30-second clips")
-    proxy = out / "analysis.mp4"
-    run("ffmpeg", "-y", "-i", str(source), "-vf", "scale=-2:360", "-r", "2", "-c:v", "libx264", "-crf", "30", "-c:a", "aac", "-b:a", "64k", str(proxy))
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-    remote = client.files.upload(file=str(proxy))
-    try:
-        for _ in range(120):
-            if remote.state.name != "PROCESSING":
-                break
-            time.sleep(5)
-            remote = client.files.get(name=remote.name)
-        if remote.state.name != "ACTIVE":
-            raise RuntimeError("Gemini video processing failed or timed out")
-        prompt = f"""Analyze the entire video (duration {duration} seconds). Select exactly 10 distinct non-overlapping engaging excerpts, each 30 to 60 seconds, with complete thoughts and strong opening hooks. Use absolute timestamps in seconds. Rank by predicted engagement, not chronological order. Return a JSON object with clips array; each clip has start, end, title, description, hashtags (array), tags (array), hook, reason. Metadata must match actual excerpt and language; avoid invented claims. Titles end in #Shorts. Choose natural boundaries."""
-        response = generate_with_retry(client, model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), contents=[remote, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
-        clips = json.loads(response.text)["clips"]
-    finally:
-        client.files.delete(name=remote.name)
+    from faster_whisper import WhisperModel
+    from scenedetect import detect, ContentDetector
+    print("Analyzing scenes and speech locally", flush=True)
+    scenes = detect(str(source), ContentDetector(threshold=27), start_in_scene=True)
+    cuts = [x[0].get_seconds() for x in scenes]
+    model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=2)
+    segments, language = model.transcribe(str(source), vad_filter=True)
+    speech = list(segments)
+    # Partition the timeline into ten disjoint regions, then score candidate windows.
+    clips = []
+    for i in range(10):
+        lo, hi = duration*i/10, duration*(i+1)/10
+        length = min(45.0, hi-lo)
+        candidates = sorted(set([lo, hi-length] + [x for x in cuts if lo <= x <= hi-length] + [x.start for x in speech if lo <= x.start <= hi-length]))
+        def score(start):
+            end = start+length
+            words = sum(len(x.text.split()) for x in speech if x.start >= start and x.end <= end)
+            changes = sum(start < x < end for x in cuts)
+            return min(words, 130)/20 + min(changes, 8)*0.4
+        start = max(candidates, key=score)
+        end = min(hi, start+length)
+        excerpt = " ".join(x.text.strip() for x in speech if x.start >= start and x.end <= end)
+        words = Counter(re.findall(r"[^\\W\\d_]{4,}", excerpt.lower()))
+        tags = [w for w,n in words.most_common(12)]
+        title = " ".join(excerpt.split()[:9]) or str(info.get("title","Video highlight"))
+        clips.append(dict(start=start,end=end,title=title,description=excerpt[:4000] or str(info.get("title","Video highlight")),hashtags=["Shorts"]+tags[:5],tags=tags,hook=title,reason="Local speech density and scene-change score",score=score(start)))
+    clips.sort(key=lambda c:c["score"], reverse=True)
     if len(clips) != 10:
-        raise ValueError("Gemini did not return exactly ten clips")
+        raise ValueError("Local analysis did not return exactly ten clips")
     intervals = []
     for c in clips:
         s, e = float(c["start"]), float(c["end"])
-        if not (0 <= s < e <= duration and 30 <= e-s <= 60) or any(s < b and e > a for a,b in intervals):
-            raise ValueError("Invalid or overlapping Gemini clip timestamps")
+        if not (0 <= s < e <= duration and 29.999999 <= e-s <= 60) or any(s < b and e > a for a,b in intervals):
+            raise ValueError("Invalid or overlapping local clip timestamps")
         intervals.append((s,e))
     manifest = []
     for i,c in enumerate(clips,1):
@@ -125,7 +91,19 @@ def main():
         video = folder / "short.mp4"
         hook = folder / "hook.txt"
         hook.write_text(str(c["hook"]).replace("\n"," ")[:65], encoding="utf-8")
+        def stamp(t):
+            ms = max(0, round(t*1000))
+            return f"{ms//3600000:02d}:{ms//60000%60:02d}:{ms//1000%60:02d},{ms%1000:03d}"
+        cues = []
+        for seg in speech:
+            left, right = max(float(c["start"]), seg.start), min(float(c["end"]), seg.end)
+            if right > left and seg.text.strip():
+                cues.append(f"{len(cues)+1}\\n{stamp(left-float(c['start']))} --> {stamp(right-float(c['start']))}\\n{seg.text.strip()}\\n")
+        subtitle = folder / "captions.srt"
+        subtitle.write_text("\\n".join(cues), encoding="utf-8")
         vf = f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile={hook}:expansion=none:fontsize=38:fontcolor=white:box=1:boxcolor=black@0.7:x=(w-tw)/2:y=220:enable='lt(t,3)'"
+        if cues:
+            vf += f",subtitles={subtitle}:force_style='FontSize=18,Alignment=2,MarginV=45'"
         run("ffmpeg","-y","-ss",str(c["start"]),"-i",str(source),"-t",str(float(c["end"])-float(c["start"])),"-vf",vf,"-af","loudnorm","-c:v","libx264","-preset","fast","-pix_fmt","yuv420p","-c:a","aac","-movflags","+faststart",str(video))
         tags = []
         for tag in c["tags"]:
