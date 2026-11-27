@@ -6,6 +6,10 @@ on:
         description: YouTube long video URL (content you own or can republish)
         required: true
         type: string
+      analysis_only:
+        description: Gemini direct URL analysis (timestamps and SEO only, no MP4)
+        type: boolean
+        default: true
       upload:
         description: Automatically upload ten Shorts
         type: boolean
@@ -34,6 +38,7 @@ jobs:
       - name: Generate ten Shorts
         env:
           VIDEO_URL: ${{ inputs.youtube_url }}
+          ANALYSIS_ONLY: ${{ inputs.analysis_only }}
           UPLOAD: ${{ inputs.upload }}
           PRIVACY: ${{ inputs.privacy }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -42,6 +47,7 @@ jobs:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: |
           args=()
+          if [ "$ANALYSIS_ONLY" = "true" ]; then args+=(--analysis-only); fi
           if [ "$UPLOAD" = "true" ]; then args+=(--upload); fi
           if [ -z "$VIDEO_URL" ]; then echo "Missing YouTube URL"; exit 1; fi
           python processor.py "$VIDEO_URL" --privacy "$PRIVACY" "${args[@]}"
