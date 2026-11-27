@@ -15,6 +15,7 @@ def run(*args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("url")
+    p.add_argument("--analysis-only", action="store_true")
     p.add_argument("--upload", action="store_true")
     p.add_argument("--privacy", choices=["private", "unlisted", "public"], default="private")
     args = p.parse_args()
@@ -23,6 +24,36 @@ def main():
     u = urlparse(args.url)
     if u.scheme != "https" or u.hostname not in ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"):
         raise ValueError("Use an HTTPS YouTube video URL")
+    if args.analysis_only:
+        if args.upload:
+            p.error("--analysis-only cannot upload video files")
+        client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        prompt = """Analyze the actual public YouTube video. Return JSON with duration_seconds and clips: exactly ten distinct non-overlapping 30–60 second excerpts, ranked by engagement. Each clip must contain start and end in absolute seconds, title ending in #Shorts, description, hashtags array, tags array, hook and reason. Do not invent content or timestamps. If video is unavailable or shorter than 300 seconds, return an error field instead."""
+        response = client.models.generate_content(
+            model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+            contents=types.Content(parts=[
+                types.Part(file_data=types.FileData(file_uri=args.url)),
+                types.Part(text=prompt)
+            ]),
+            config=types.GenerateContentConfig(response_mime_type="application/json"))
+        data = json.loads(response.text)
+        if data.get("error"):
+            raise ValueError(str(data["error"]))
+        duration = float(data["duration_seconds"])
+        clips = data["clips"]
+        if len(clips) != 10 or duration < 300:
+            raise ValueError("Expected ten clips from a video of at least five minutes")
+        intervals = []
+        for c in clips:
+            start, end = float(c["start"]), float(c["end"])
+            if not (0 <= start < end <= duration and 30 <= end-start <= 60) or any(start < b and end > a for a,b in intervals):
+                raise ValueError("Invalid or overlapping AI timestamps")
+            intervals.append((start,end))
+        data["status"] = "analysis_only_no_video_rendered"
+        data["source_url"] = args.url
+        (out / "manifest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("Analysis complete: ten proposed clips. No MP4 files generated or uploaded.")
+        return
     class DownloadDiagnostics:
         blocked = False
         rate_limited = False
