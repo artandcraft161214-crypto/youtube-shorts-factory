@@ -2,7 +2,7 @@ import argparse, json, os, subprocess, time
 from pathlib import Path
 from urllib.parse import urlparse
 from google import genai
-from google.genai import types
+from google.genai import types, errors
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -11,6 +11,18 @@ from yt_dlp.utils import DownloadError
 
 def run(*args):
     subprocess.run(args, check=True)
+
+def generate_with_retry(client, **kwargs):
+    delays = (20, 40, 80, 120)
+    for attempt in range(len(delays) + 1):
+        try:
+            return client.models.generate_content(**kwargs)
+        except errors.APIError as exc:
+            if getattr(exc, "code", None) not in (500, 502, 503, 504) or attempt == len(delays):
+                raise
+            delay = delays[attempt]
+            print(f"Gemini temporarily unavailable; retry {attempt + 1}/{len(delays)} in {delay}s", flush=True)
+            time.sleep(delay)
 
 def main():
     p = argparse.ArgumentParser()
@@ -29,7 +41,7 @@ def main():
             p.error("--analysis-only cannot upload video files")
         client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
         prompt = """Analyze the actual public YouTube video. Return JSON with duration_seconds and clips: exactly ten distinct non-overlapping 30–60 second excerpts, ranked by engagement. Each clip must contain start and end in absolute seconds, title ending in #Shorts, description, hashtags array, tags array, hook and reason. Do not invent content or timestamps. If video is unavailable or shorter than 300 seconds, return an error field instead."""
-        response = client.models.generate_content(
+        response = generate_with_retry(client, 
             model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
             contents=types.Content(parts=[
                 types.Part(file_data=types.FileData(file_uri=args.url)),
@@ -94,7 +106,7 @@ def main():
         if remote.state.name != "ACTIVE":
             raise RuntimeError("Gemini video processing failed or timed out")
         prompt = f"""Analyze the entire video (duration {duration} seconds). Select exactly 10 distinct non-overlapping engaging excerpts, each 30 to 60 seconds, with complete thoughts and strong opening hooks. Use absolute timestamps in seconds. Rank by predicted engagement, not chronological order. Return a JSON object with clips array; each clip has start, end, title, description, hashtags (array), tags (array), hook, reason. Metadata must match actual excerpt and language; avoid invented claims. Titles end in #Shorts. Choose natural boundaries."""
-        response = client.models.generate_content(model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), contents=[remote, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
+        response = generate_with_retry(client, model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), contents=[remote, prompt], config=types.GenerateContentConfig(response_mime_type="application/json"))
         clips = json.loads(response.text)["clips"]
     finally:
         client.files.delete(name=remote.name)
