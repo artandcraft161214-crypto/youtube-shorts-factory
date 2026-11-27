@@ -31,10 +31,16 @@ jobs:
           deno-version: v2.x
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pip install -r requirements.txt
+      - name: Install browser for authorized fallback
+        if: ${{ vars.VD6S_BROWSER_ALLOWED == 'true' }}
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
       - run: python -m py_compile processor.py
       - name: Generate ten Shorts locally
         env:
           VD6S_API_URL: ${{ vars.VD6S_API_URL }}
+          VD6S_BROWSER_ALLOWED: ${{ vars.VD6S_BROWSER_ALLOWED }}
           VIDEO_URL: ${{ inputs.youtube_url }}
           UPLOAD: ${{ inputs.upload }}
           PRIVACY: ${{ inputs.privacy }}
