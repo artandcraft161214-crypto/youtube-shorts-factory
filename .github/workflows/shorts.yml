@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       browser_fallback:
-        description: Use VD6S browser fallback (only when you have permission)
+        description: VD6S browser diagnostics only (no automatic download)
         type: boolean
         default: false
       upload:
@@ -66,4 +66,5 @@ jobs:
             output/short_*/metadata.json
             output/short_*/captions.srt
             output/manifest.json
+            output/browser_diagnostics/
           retention-days: 3
