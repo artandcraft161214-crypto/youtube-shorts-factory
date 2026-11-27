@@ -1,0 +1,5 @@
+.env
+*.mp4
+output/
+__pycache__/
+client_secret*.json
