@@ -1,13 +1,12 @@
 # YouTube Shorts Factory
 
-Convert an authorized long YouTube video into ten non-overlapping 30–60 second Shorts using Gemini video analysis, FFmpeg vertical padding, hook overlay, audio normalization, individual SEO metadata and optional automatic YouTube upload.
+GitHub-hosted workflow that accepts **only a YouTube long-video URL** and aims to generate ten non-overlapping 30–60 second Shorts, using Gemini video analysis, FFmpeg vertical editing and hook overlay, individual title/SEO metadata, and optional automatic YouTube upload.
 
-Configure GEMINI_API_KEY and, for uploads, YOUTUBE_CLIENT_ID, YOUTUBE_CLIENT_SECRET, YOUTUBE_REFRESH_TOKEN. Run Actions > YouTube Shorts Factory with youtube_url. Test with upload disabled first. Upload visibility defaults to private; public is selectable. Use only videos you have permission to download and republish.
+## Setup
+Add GitHub Actions secret `GEMINI_API_KEY`. For uploading also add `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, and `YOUTUBE_REFRESH_TOKEN` (with YouTube upload OAuth scope). Run **Actions > YouTube Shorts Factory > Run workflow** and enter your authorized YouTube video URL. Leave upload disabled until processing succeeds. Video uploads, if enabled, default to private.
 
-Minimum source duration: 5 minutes. Gemini timestamp validation rejects invalid selections. Output artifact contains clips and manifest. Not yet end-to-end tested. YouTube download restrictions, Gemini file/context limits, upload quota and API project restrictions may prevent completion. Captions and subject tracking are not yet implemented. Rerunning an upload can duplicate videos.
+## Critical limitation: YouTube downloader
+GitHub-hosted runners are currently receiving **"Sign in to confirm you're not a bot"** for the tested YouTube URL, even with Deno/EJS installed. This is YouTube access control, not a Gemini failure. No guaranteed code-only fix has been established; repeating the same link on GitHub Actions is likely to fail at download again. The pipeline has **not** successfully generated ten Shorts end to end. There is deliberately no direct MP4 URL or self-hosted runner option in this project.
 
-## YouTube download failures
-The hosted GitHub runner installs Deno and yt-dlp EJS support to handle YouTube's JavaScript extraction requirements. This cannot guarantee downloads: YouTube may still require bot verification or block GitHub's cloud IP. If so, consider a self-hosted runner on an authorized machine or process a video file you own locally. Do not publish or share YouTube account cookies in repository secrets/logs.
-
-## Alternative when GitHub-hosted IPs are blocked
-In the Actions form, leave `youtube_url` blank and provide `video_file_url`: a direct HTTPS download URL for an MP4 you own or are authorized to republish. This must return actual video bytes, not a Drive/Dropbox preview page. The workflow downloads it and runs the same Gemini/FFmpeg clipping pipeline. Avoid URLs containing long-lived access tokens; workflow inputs can be visible to people with Actions access. For private/sensitive footage use a self-hosted runner and `python processor.py --video-file /path/to/video.mp4` rather than a public URL. Leave `upload` disabled for initial test.
+## Additional notes
+The video must be at least five minutes long to select ten non-overlapping clips of at least 30 seconds. Processing can also be constrained by Gemini file limits, rate limits, YouTube upload quota, or other API restrictions. Captions and smart subject-tracking are not implemented. Only process content you own or have permission to republish. Never commit credentials.
