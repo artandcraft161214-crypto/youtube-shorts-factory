@@ -60,9 +60,9 @@ def main():
     # Partition the timeline into ten disjoint regions, then score candidate windows.
     clips = []
     for i in range(10):
-        lo, hi = duration*i/10, duration*(i+1)/10
+        lo, hi = duration*i/10, min(duration, duration*(i+1)/10)
         length = min(45.0, hi-lo)
-        candidates = sorted(set([lo, hi-length] + [x for x in cuts if lo <= x <= hi-length] + [x.start for x in speech if lo <= x.start <= hi-length]))
+        candidates = sorted(set([lo, max(lo, hi-length)] + [x for x in cuts if lo <= x <= hi-length] + [x.start for x in speech if lo <= x.start <= hi-length]))
         def score(start):
             end = start+length
             words = sum(len(x.text.split()) for x in speech if x.start >= start and x.end <= end)
@@ -71,7 +71,7 @@ def main():
         start = max(candidates, key=score)
         end = min(hi, start+length)
         excerpt = " ".join(x.text.strip() for x in speech if x.start >= start and x.end <= end)
-        words = Counter(re.findall(r"[^\\W\\d_]{4,}", excerpt.lower()))
+        words = Counter(re.findall(r"[^\W\d_]{4,}", excerpt.lower()))
         tags = [w for w,n in words.most_common(12)]
         title = " ".join(excerpt.split()[:9]) or str(info.get("title","Video highlight"))
         clips.append(dict(start=start,end=end,title=title,description=excerpt[:4000] or str(info.get("title","Video highlight")),hashtags=["Shorts"]+tags[:5],tags=tags,hook=title,reason="Local speech density and scene-change score",score=score(start)))
@@ -98,9 +98,9 @@ def main():
         for seg in speech:
             left, right = max(float(c["start"]), seg.start), min(float(c["end"]), seg.end)
             if right > left and seg.text.strip():
-                cues.append(f"{len(cues)+1}\\n{stamp(left-float(c['start']))} --> {stamp(right-float(c['start']))}\\n{seg.text.strip()}\\n")
+                cues.append(f"{len(cues)+1}\n{stamp(left-float(c['start']))} --> {stamp(right-float(c['start']))}\n{seg.text.strip()}\n")
         subtitle = folder / "captions.srt"
-        subtitle.write_text("\\n".join(cues), encoding="utf-8")
+        subtitle.write_text("\n".join(cues), encoding="utf-8")
         vf = f"scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,drawtext=fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:textfile={hook}:expansion=none:fontsize=38:fontcolor=white:box=1:boxcolor=black@0.7:x=(w-tw)/2:y=220:enable='lt(t,3)'"
         if cues:
             vf += f",subtitles={subtitle}:force_style='FontSize=18,Alignment=2,MarginV=45'"
