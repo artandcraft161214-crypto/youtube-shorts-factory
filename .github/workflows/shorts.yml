@@ -6,6 +6,10 @@ on:
         description: YouTube long video URL (content you own or can republish)
         required: true
         type: string
+      browser_fallback:
+        description: Use VD6S browser fallback (only when you have permission)
+        type: boolean
+        default: false
       upload:
         description: Automatically upload ten Shorts
         type: boolean
@@ -32,7 +36,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pip install -r requirements.txt
       - name: Install browser for authorized fallback
-        if: ${{ vars.VD6S_BROWSER_ALLOWED == 'true' }}
+        if: ${{ inputs.browser_fallback || vars.VD6S_BROWSER_ALLOWED == 'true' }}
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
@@ -40,7 +44,7 @@ jobs:
       - name: Generate ten Shorts locally
         env:
           VD6S_API_URL: ${{ vars.VD6S_API_URL }}
-          VD6S_BROWSER_ALLOWED: ${{ vars.VD6S_BROWSER_ALLOWED }}
+          VD6S_BROWSER_ALLOWED: ${{ inputs.browser_fallback || vars.VD6S_BROWSER_ALLOWED == 'true' }}
           VIDEO_URL: ${{ inputs.youtube_url }}
           UPLOAD: ${{ inputs.upload }}
           PRIVACY: ${{ inputs.privacy }}
@@ -51,6 +55,7 @@ jobs:
           args=()
           if [ "$UPLOAD" = "true" ]; then args+=(--upload); fi
           if [ -z "$VIDEO_URL" ]; then echo "Missing YouTube URL"; exit 1; fi
+          echo "VD6S browser fallback enabled: $VD6S_BROWSER_ALLOWED"
           python processor.py "$VIDEO_URL" --privacy "$PRIVACY" "${args[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
