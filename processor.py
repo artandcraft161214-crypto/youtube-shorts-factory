@@ -23,13 +23,28 @@ def main():
     u = urlparse(args.url)
     if u.scheme != "https" or u.hostname not in ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"):
         raise ValueError("Use an HTTPS YouTube video URL")
-    options = {"outtmpl": str(out / "source.%(ext)s"), "format": "bv*[height<=1080]+ba/b[height<=1080]", "merge_output_format": "mp4", "noplaylist": True, "js_runtimes": {"deno": {}}}
+    class DownloadDiagnostics:
+        blocked = False
+        rate_limited = False
+        def debug(self, msg):
+            print(msg)
+        def warning(self, msg):
+            if "429" in msg or "Too Many Requests" in msg:
+                self.rate_limited = True
+            print("WARNING: " + msg)
+        def error(self, msg):
+            if "Sign in to confirm" in msg or "not a bot" in msg:
+                self.blocked = True
+            print("ERROR: " + msg)
+
+    diag = DownloadDiagnostics()
+    options = {"logger": diag, "retries": 0, "extractor_retries": 0, "fragment_retries": 0, "outtmpl": str(out / "source.%(ext)s"), "format": "bv*[height<=1080]+ba/b[height<=1080]", "merge_output_format": "mp4", "noplaylist": True, "js_runtimes": {"deno": {}}}
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(args.url, download=True)
     except DownloadError as exc:
-        if "Sign in to confirm" in str(exc) or "not a bot" in str(exc):
-            raise RuntimeError("YouTube requested bot verification and blocked this GitHub-hosted download. No reliable code-only workaround is available for this runner; the clip-processing stage was not reached.") from exc
+        if diag.blocked or diag.rate_limited or "Sign in to confirm" in str(exc) or "not a bot" in str(exc) or "429" in str(exc):
+            raise RuntimeError("YOUTUBE_ACCESS_BLOCKED: GitHub-hosted runner received YouTube rate-limiting (HTTP 429) and/or bot verification. Stopping without retries; Gemini and Shorts generation were not reached. This is a YouTube access restriction, not a code or Gemini-key failure.") from exc
         raise
     source = next(f for f in out.glob("source.*") if f.suffix in (".mp4", ".webm", ".mkv"))
     duration = float(info["duration"])
