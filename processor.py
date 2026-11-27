@@ -12,28 +12,27 @@ def run(*args):
     subprocess.run(args, check=True)
 
 def browser_download(url, out):
-    # Only use with permission from the site and rights to the source video.
-    from playwright.sync_api import sync_playwright
-    target = out / "source.mp4"
+    # VD6S requires prior written permission for automated integrations.
+    # This diagnostic mode never attempts to bypass restrictions.
+    from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
+    diag_dir = out / "browser_diagnostics"
+    diag_dir.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page(accept_downloads=True)
-            page.goto("https://vd6s.net/en5/", wait_until="domcontentloaded", timeout=60000)
-            field = page.locator('input[type="url"], input[name="url"], input[placeholder*="link" i]').first
-            field.fill(url, timeout=20000)
-            page.get_by_role("button", name=re.compile("convert|start|download", re.I)).first.click(timeout=20000)
-            row = page.locator("tr").filter(has_text=re.compile(r"720p", re.I)).filter(has_text=re.compile("mp4", re.I)).first
-            button = row.get_by_role("link", name=re.compile("download", re.I)).or_(row.get_by_role("button", name=re.compile("download", re.I))).first
-            with page.expect_download(timeout=120000) as event:
-                button.click(timeout=60000)
-            event.value.save_as(str(target))
+            page.set_default_timeout(15000)
+            response = page.goto("https://vd6s.net/en5/", wait_until="domcontentloaded", timeout=45000)
+            print(f"VD6S page HTTP status: {response.status if response else 'unknown'}", flush=True)
+            print(f"VD6S page title: {page.title()[:120]}", flush=True)
+            input_count = page.locator('input').count()
+            print(f"VD6S initial input count: {input_count}", flush=True)
+            page.screenshot(path=str(diag_dir / "vd6s-page.png"), full_page=True, timeout=15000)
+            (diag_dir / "vd6s-page.txt").write_text(page.locator("body").inner_text(timeout=15000)[:10000], encoding="utf-8")
+            print("Saved VD6S diagnostic screenshot and visible page text.", flush=True)
         finally:
             browser.close()
-    probe = json.loads(subprocess.check_output(["ffprobe","-v","error","-show_streams","-show_format","-of","json",str(target)]))
-    if not any(x.get("codec_type") == "video" for x in probe["streams"]):
-        raise RuntimeError("Browser download is not a valid video")
-    return {"duration":float(probe["format"]["duration"]),"title":"Video highlight"}
+    raise SystemExit("VD6S_BROWSER_NOT_AUTHORIZED: VD6S terms require prior written permission for automated integration. Browser diagnostic captured; download was intentionally not attempted. Use an approved API or a permitted source.")
 
 def main():
     p = argparse.ArgumentParser()
