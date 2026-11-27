@@ -14,24 +14,32 @@ def run(*args):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("url")
+    p.add_argument("url", nargs="?", default="")
+    p.add_argument("--video-file", default="", help="Path to an authorized local source video")
     p.add_argument("--upload", action="store_true")
     p.add_argument("--privacy", choices=["private", "unlisted", "public"], default="private")
     args = p.parse_args()
-    u = urlparse(args.url)
-    if u.scheme != "https" or u.hostname not in ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"):
-        raise ValueError("Use an HTTPS YouTube video URL")
     out = Path("output")
     out.mkdir(exist_ok=True)
-    options = {"outtmpl": str(out / "source.%(ext)s"), "format": "bv*[height<=1080]+ba/b[height<=1080]", "merge_output_format": "mp4", "noplaylist": True, "js_runtimes": {"deno": {}}}
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(args.url, download=True)
-    except DownloadError as exc:
-        if "Sign in to confirm" in str(exc) or "not a bot" in str(exc):
-            raise RuntimeError("YouTube requested bot verification for this GitHub runner. Deno/EJS are installed, but hosted GitHub IP addresses can still be blocked. Use a permitted local/self-hosted runner with your own authorized video; do not upload account cookies into this repository.") from exc
-        raise
-    source = next(f for f in out.glob("source.*") if f.suffix in (".mp4", ".webm", ".mkv"))
+    if args.video_file:
+        source = Path(args.video_file).expanduser().resolve()
+        if not source.is_file() or source.suffix.lower() not in (".mp4", ".mkv", ".mov", ".webm"):
+            raise ValueError("Provide an existing MP4/MKV/MOV/WebM file")
+        probe = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", str(source)], text=True)
+        info = {"duration": float(probe.strip())}
+    else:
+        u = urlparse(args.url)
+        if u.scheme != "https" or u.hostname not in ("youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"):
+            raise ValueError("Use an HTTPS YouTube video URL or --video-file")
+        options = {"outtmpl": str(out / "source.%(ext)s"), "format": "bv*[height<=1080]+ba/b[height<=1080]", "merge_output_format": "mp4", "noplaylist": True, "js_runtimes": {"deno": {}}}
+        try:
+            with yt_dlp.YoutubeDL(options) as ydl:
+                info = ydl.extract_info(args.url, download=True)
+        except DownloadError as exc:
+            if "Sign in to confirm" in str(exc) or "not a bot" in str(exc):
+                raise RuntimeError("YouTube blocked this GitHub-hosted runner. Instead, provide an authorized source video via --video-file or use a self-hosted runner. More retries on GitHub-hosted IPs are unlikely to help.") from exc
+            raise
+        source = next(f for f in out.glob("source.*") if f.suffix in (".mp4", ".webm", ".mkv"))
     duration = float(info["duration"])
     if duration < 300:
         raise ValueError("At least 5 minutes needed for ten non-overlapping 30-second clips")
