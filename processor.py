@@ -43,7 +43,8 @@ def main():
             info = ydl.extract_info(args.url, download=True)
     except DownloadError as exc:
         if diag.blocked or diag.rate_limited or "Sign in to confirm" in str(exc) or "not a bot" in str(exc) or "429" in str(exc):
-            raise RuntimeError("YOUTUBE_ACCESS_BLOCKED: GitHub-hosted runner received YouTube rate-limiting (HTTP 429) and/or bot verification. Stopping without retries; Local analysis and Shorts generation were not reached. This is a YouTube access restriction, not a code or Gemini-key failure.") from exc
+            print("::error title=YouTube blocked anonymous download::YouTube rejected yt-dlp on this GitHub-hosted runner. No source video was downloaded; local AI and Shorts rendering were not executed.", flush=True)
+            raise SystemExit("YOUTUBE_ACCESS_BLOCKED: Anonymous YouTube access denied from this runner. No guaranteed cookie-free, login-free fix exists for the runner's IP. Stop here; retrying the same source on the same service may keep failing.") from None
         raise
     source = next(f for f in out.glob("source.*") if f.suffix in (".mp4", ".webm", ".mkv"))
     duration = float(info["duration"])
