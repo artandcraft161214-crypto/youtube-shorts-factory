@@ -40,7 +40,8 @@ jobs:
         run: |
           args=()
           if [ "$UPLOAD" = "true" ]; then args+=(--upload); fi
-          python processor.py "$REEL_URL" "${args[@]}"
+          if [ -z "$VIDEO_URL" ]; then echo "Missing YouTube URL"; exit 1; fi
+          python processor.py "$VIDEO_URL" --privacy "$PRIVACY" "${args[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
