@@ -1,4 +1,5 @@
 yt-dlp[default]
-google-genai
+faster-whisper
+scenedetect[opencv-headless]
 google-api-python-client
 google-auth
