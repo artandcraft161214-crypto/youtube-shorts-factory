@@ -7,6 +7,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 import yt_dlp
+from yt_dlp.utils import DownloadError
 
 def run(*args):
     subprocess.run(args, check=True)
@@ -22,8 +23,14 @@ def main():
         raise ValueError("Use an HTTPS YouTube video URL")
     out = Path("output")
     out.mkdir(exist_ok=True)
-    with yt_dlp.YoutubeDL({"outtmpl": str(out / "source.%(ext)s"), "format": "bv*[height<=1080]+ba/b[height<=1080]", "merge_output_format": "mp4", "noplaylist": True}) as ydl:
-        info = ydl.extract_info(args.url, download=True)
+    options = {"outtmpl": str(out / "source.%(ext)s"), "format": "bv*[height<=1080]+ba/b[height<=1080]", "merge_output_format": "mp4", "noplaylist": True, "js_runtimes": {"deno": {}}}
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(args.url, download=True)
+    except DownloadError as exc:
+        if "Sign in to confirm" in str(exc) or "not a bot" in str(exc):
+            raise RuntimeError("YouTube requested bot verification for this GitHub runner. Deno/EJS are installed, but hosted GitHub IP addresses can still be blocked. Use a permitted local/self-hosted runner with your own authorized video; do not upload account cookies into this repository.") from exc
+        raise
     source = next(f for f in out.glob("source.*") if f.suffix in (".mp4", ".webm", ".mkv"))
     duration = float(info["duration"])
     if duration < 300:
