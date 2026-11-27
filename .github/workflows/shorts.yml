@@ -6,10 +6,6 @@ on:
         description: YouTube long video URL (content you own or can republish)
         required: true
         type: string
-      analysis_only:
-        description: Gemini direct URL analysis (timestamps and SEO only, no MP4)
-        type: boolean
-        default: true
       upload:
         description: Automatically upload ten Shorts
         type: boolean
@@ -35,19 +31,17 @@ jobs:
           deno-version: v2.x
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: pip install -r requirements.txt
-      - name: Generate ten Shorts
+      - run: python -m py_compile processor.py
+      - name: Generate ten Shorts locally
         env:
           VIDEO_URL: ${{ inputs.youtube_url }}
-          ANALYSIS_ONLY: ${{ inputs.analysis_only }}
           UPLOAD: ${{ inputs.upload }}
           PRIVACY: ${{ inputs.privacy }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
         run: |
           args=()
-          if [ "$ANALYSIS_ONLY" = "true" ]; then args+=(--analysis-only); fi
           if [ "$UPLOAD" = "true" ]; then args+=(--upload); fi
           if [ -z "$VIDEO_URL" ]; then echo "Missing YouTube URL"; exit 1; fi
           python processor.py "$VIDEO_URL" --privacy "$PRIVACY" "${args[@]}"
@@ -58,5 +52,6 @@ jobs:
           path: |
             output/short_*/short.mp4
             output/short_*/metadata.json
+            output/short_*/captions.srt
             output/manifest.json
           retention-days: 3
